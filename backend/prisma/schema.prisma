@@ -1,0 +1,266 @@
+// Class Payment Tracker Pro — Prisma Schema
+// PostgreSQL database schema covering teachers, students, classes,
+// collections, payments, settings, notifications, audit logs and
+// payment status history.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// ENUMS
+// ---------------------------------------------------------------------------
+
+enum PaymentStatus {
+  PENDING            // submitted, awaiting review
+  PENDING_PAYMENT     // not yet submitted by student
+  APPROVED
+  REJECTED
+  LATE
+  REUPLOAD_REQUESTED
+}
+
+enum FraudRisk {
+  NONE
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum NotificationType {
+  SUBMISSION_RECEIVED
+  APPROVED
+  REJECTED
+  REUPLOAD_REQUESTED
+  DEADLINE_APPROACHING
+  GENERAL
+}
+
+enum AuditAction {
+  LOGIN
+  LOGOUT
+  IMPORT_STUDENTS
+  APPROVE_PAYMENT
+  REJECT_PAYMENT
+  REQUEST_REUPLOAD
+  SETTINGS_CHANGE
+  CREATE_CLASS
+  CREATE_COLLECTION
+  UPDATE_COLLECTION
+  DELETE_COLLECTION
+  CREATE_TEACHER
+  RECONCILE_STATEMENT
+  GENERATE_RECEIPT
+}
+
+enum ActorType {
+  TEACHER
+  STUDENT
+  SYSTEM
+}
+
+enum VerificationMethod {
+  MANUAL_OCR        // student-submitted screenshot + OCR assist
+  STATEMENT_RECONCILIATION // teacher-uploaded bank/UPI statement match
+  MANUAL_OVERRIDE    // teacher manually approved/rejected without OCR
+}
+
+// ---------------------------------------------------------------------------
+// CORE ENTITIES
+// ---------------------------------------------------------------------------
+
+model Teacher {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  isSuperAdmin Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  classes       Class[]
+  collections   Collection[]
+  settings      Settings?
+  reviewedPayments Payment[]        @relation("ReviewedBy")
+  statusChanges PaymentStatusHistory[] @relation("ChangedByTeacher")
+  auditLogs     AuditLog[]           @relation("TeacherAuditLogs")
+
+  @@map("teachers")
+}
+
+model Class {
+  id        String   @id @default(uuid())
+  name      String   // e.g. CSE-A
+  teacherId String
+  teacher   Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  students  Student[]
+
+  @@unique([teacherId, name])
+  @@map("classes")
+}
+
+model Student {
+  id        String   @id @default(uuid())
+  name      String
+  pin       String   @unique // format 25007-CS-001
+  phone     String?
+  classId   String
+  class     Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments      Payment[]
+  notifications Notification[]
+  statusChanges PaymentStatusHistory[] @relation("ChangedByStudent")
+
+  @@index([classId])
+  @@map("students")
+}
+
+model Collection {
+  id          String   @id @default(uuid())
+  name        String   // e.g. Lab Fee
+  amount      Decimal  @db.Decimal(10, 2)
+  description String?
+  deadline    DateTime?
+  isActive    Boolean  @default(true)
+  teacherId   String
+  teacher     Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  payments Payment[]
+
+  @@index([teacherId])
+  @@map("collections")
+}
+
+model Payment {
+  id              String        @id @default(uuid())
+  studentId       String
+  student         Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  collectionId    String
+  collection      Collection    @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  // Submission data
+  utrEntered      String?       // UTR typed by the student
+  utrOcr          String?       // UTR extracted by OCR
+  amountOcr       Decimal?      @db.Decimal(10, 2)
+  dateOcr         DateTime?
+  screenshotUrl   String?
+  screenshotPublicId String?    // Cloudinary public_id (or local path) for cleanup
+  imageHash       String?       // perceptual hash (aHash) for near-duplicate detection
+  fileSha256      String?       // exact-duplicate detection
+  fileMetadata    Json?         // original filename, size, mimetype, exif-ish data
+
+  ocrRawText      String?
+  ocrSuccessTextFound Boolean?  // "payment successful" style text detected
+  ocrConfidence   Float?
+
+  status          PaymentStatus @default(PENDING_PAYMENT)
+  fraudRisk       FraudRisk     @default(NONE)
+  fraudReasons    String[]      @default([])
+  verificationMethod VerificationMethod?
+
+  reviewNotes     String?
+  reviewedById    String?
+  reviewedBy      Teacher?      @relation("ReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt      DateTime?
+
+  receiptNumber   String?       @unique // RCT-2026-000001
+  receiptGeneratedAt DateTime?
+
+  submittedAt     DateTime?
+  isLate          Boolean       @default(false)
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  statusHistory   PaymentStatusHistory[]
+
+  @@unique([studentId, collectionId])
+  @@index([collectionId])
+  @@index([studentId])
+  @@index([status])
+  @@index([utrEntered])
+  @@map("payments")
+}
+
+model PaymentStatusHistory {
+  id          String        @id @default(uuid())
+  paymentId   String
+  payment     Payment       @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  status      PaymentStatus
+  reason      String?
+  changedByActorType ActorType
+  changedByTeacherId  String?
+  changedByTeacher    Teacher? @relation("ChangedByTeacher", fields: [changedByTeacherId], references: [id])
+  changedByStudentId  String?
+  changedByStudent    Student? @relation("ChangedByStudent", fields: [changedByStudentId], references: [id])
+  createdAt   DateTime      @default(now())
+
+  @@index([paymentId])
+  @@map("payment_status_history")
+}
+
+model Settings {
+  id                   String   @id @default(uuid())
+  teacherId            String   @unique
+  teacher              Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  institutionName      String   @default("My Institution")
+  teacherDisplayName   String   @default("Teacher")
+  upiId                String?
+  upiPhoneNumber       String?
+  defaultAmount        Decimal  @default(300) @db.Decimal(10, 2)
+  institutionLogoUrl   String?
+  theme                String   @default("system") // "light" | "dark" | "system"
+  collectionDeadline   DateTime?
+
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@map("settings")
+}
+
+model Notification {
+  id        String            @id @default(uuid())
+  studentId String?
+  student   Student?          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  message   String
+  isRead    Boolean           @default(false)
+  metadata  Json?
+  createdAt DateTime          @default(now())
+
+  @@index([studentId])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id          String      @id @default(uuid())
+  action      AuditAction
+  actorType   ActorType
+  teacherId   String?
+  teacher     Teacher?    @relation("TeacherAuditLogs", fields: [teacherId], references: [id])
+  actorLabel  String      // human readable actor name/id, kept even if FK is removed
+  targetType  String?     // e.g. "Payment", "Student"
+  targetId    String?
+  description String
+  metadata    Json?
+  ipAddress   String?
+  createdAt   DateTime    @default(now())
+
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

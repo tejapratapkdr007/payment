@@ -1,0 +1,92 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+.dark {
+  color-scheme: dark;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  @apply bg-paper text-ink font-body antialiased;
+  -webkit-font-smoothing: antialiased;
+}
+.dark body {
+  @apply bg-paper-dark text-paper-50;
+}
+
+* {
+  @apply border-line dark:border-line-dark;
+}
+
+::selection {
+  background: theme("colors.marigold.DEFAULT");
+  color: theme("colors.ink.900");
+}
+
+/* Visible keyboard focus throughout - accessibility floor */
+:focus-visible {
+  outline: 2px solid theme("colors.marigold.DEFAULT");
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+/* Signature motif: the perforated receipt edge.                          */
+/* A row of paper-colored "punched" semicircles along the top of a card,  */
+/* evoking a torn paper receipt. Used on ReceiptCard and a few hero       */
+/* moments — kept rare and deliberate, not on every card in the app.      */
+/* ---------------------------------------------------------------------- */
+.receipt-edge {
+  position: relative;
+}
+.receipt-edge::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 0;
+  right: 0;
+  height: 10px;
+  background-image: radial-gradient(circle at 10px 0, transparent 9px, currentColor 9.5px);
+  background-size: 20px 20px;
+  background-repeat: repeat-x;
+  background-position: 4px 0;
+  color: theme("colors.paper.DEFAULT");
+  pointer-events: none;
+}
+.dark .receipt-edge::before {
+  color: theme("colors.paper.dark");
+}
+
+/* Dotted ledger divider between line-items */
+.ledger-rule {
+  border-bottom: 1.5px dashed theme("colors.line");
+}
+.dark .ledger-rule {
+  border-bottom-color: theme("colors.line-dark");
+}
+
+/* Tabular, ledger-style numerals for amounts / PINs / UTRs / receipt numbers */
+.figure {
+  @apply font-mono tabular-nums;
+}
+
+/* Rubber-stamp status badge: rotated, double-ring, ink-on-paper */
+.stamp {
+  @apply inline-flex items-center gap-1.5 px-3 py-1 rounded-sm border-2 font-display font-bold text-xs uppercase tracking-wider;
+  transform: rotate(-3deg);
+}
